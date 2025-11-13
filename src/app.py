@@ -370,16 +370,24 @@ def leaderboard():
 
 
 # -------------------------- Admin utilities -------------------------
-@app.route("/admin/reset_month", methods=["POST"])
+@app.route("/admin/reset_month", methods=["POST", "GET"])
 def admin_reset_month():
     # Reset all students for new month (idempotent for current month)
     now_month = current_month_str()
     students = Student.query.all()
+    updated_ids = []
     for s in students:
         if s.last_reset_month != now_month:
             ensure_monthly_reset(s)
+            updated_ids.append(s.id)
     db.session.commit()
-    return jsonify({"status": "ok", "reset_month": now_month, "processed": len(students)})
+    return jsonify({
+        "status": "ok",
+        "reset_month": now_month,
+        "processed": len(students),
+        "updated": len(updated_ids),
+        "updated_ids": updated_ids,
+    })
 
 
 @app.route("/health", methods=["GET"])
