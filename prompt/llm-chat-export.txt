@@ -1,0 +1,6 @@
+Replace this content with your complete LLM/AI assistant conversation export for this assignment.
+
+Tips:
+- If you used this CLI or a web UI, export or copy the full transcript.
+- Paste it here so reviewers can see how you collaborated with AI.
+

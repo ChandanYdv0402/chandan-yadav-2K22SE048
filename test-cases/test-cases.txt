@@ -1,0 +1,62 @@
+Boostly — Manual Test Cases
+
+Prereqs
+- Start server: `python src/app.py`
+- Base URL: http://127.0.0.1:5000
+
+1) Recognition
+- Steps:
+  1. Create two students: Alice and Bob.
+  2. Fetch Alice to view sending balance and monthly limit.
+  3. Send a recognition from Alice -> Bob for 10 credits with a message.
+  4. Fetch Alice again to see reduced available_credits and increased monthly_sent.
+  5. Fetch Bob to see increased received_balance.
+- Expected:
+  - Recognition succeeds (201) and returns recognition_id.
+  - Alice available_credits decreases by 10, monthly_sent increases by 10.
+  - Bob received_balance increases by 10.
+  - Sending more than Alice's remaining available credits or remaining monthly limit returns 400.
+
+2) Endorsements
+- Steps:
+  1. Create a third student: Carol.
+  2. Endorse Bob's received recognition using Carol as endorser.
+  3. Try to endorse the same recognition again with Carol.
+- Expected:
+  - First endorsement succeeds (201); total_endorsements increases to 1.
+  - Second endorsement returns 409 with error about endorsing only once.
+  - Endorsements do not change any credit balances.
+
+3) Redemption
+- Steps:
+  1. Fetch Bob to confirm received_balance (>= 10 from earlier).
+  2. Redeem 5 credits for Bob.
+  3. Fetch Bob again to verify received_balance decreased by 5.
+- Expected:
+  - Redemption succeeds (201) and returns voucher_value_in_inr = 5 * amount.
+  - Bob received_balance reduces accordingly.
+  - Attempting to redeem more than available returns 400.
+
+4) Credit Reset (Month Change)
+- Steps:
+  1. Create a new student: Dan.
+  2. Immediately fetch Dan; note available_credits = 100, monthly_sent = 0.
+  3. Simulate new month (manually update DB or wait) OR call `/admin/reset_month` after changing system month for testing.
+  4. For an existing student with unused credits > 50, verify only 50 carry forward.
+  5. For an existing student with < 50 unused, verify exact carry forward.
+- Expected:
+  - After reset, available_credits = 100 + min(previous_unused, 50).
+  - monthly_sent resets to 0.
+  - Remaining monthly limit becomes 100.
+
+5) Leaderboard
+- Steps:
+  1. Ensure several recognitions exist to multiple recipients.
+  2. Call `/leaderboard?limit=5`.
+  3. Verify order by total_credits_received desc; tie broken by student_id asc.
+  4. Verify recognitions_count and endorsements_count look correct.
+- Expected:
+  - Correct ranking, with totals reflecting lifetime credits received (not reduced by redemption).
+
+Optional: Use the UI at `/` to perform each action with forms.
+

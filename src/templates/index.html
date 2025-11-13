@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Boostly — Kudos & Credits</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script defer src="/static/app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  </style>
+  </head>
+<body>
+  <div class="container">
+    <h1>Boostly</h1>
+    <p class="subtitle">Boost morale, one kudos at a time.</p>
+
+    <section class="card">
+      <h2>Create Student</h2>
+      <form id="create-student-form">
+        <input type="text" id="student-name" placeholder="Name" required />
+        <button type="submit">Create</button>
+      </form>
+      <pre id="create-student-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Get Student</h2>
+      <form id="get-student-form">
+        <input type="number" id="get-student-id" placeholder="Student ID" required />
+        <button type="submit">Fetch</button>
+      </form>
+      <pre id="get-student-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Recognition</h2>
+      <form id="recognition-form">
+        <input type="number" id="sender-id" placeholder="Sender ID" required />
+        <input type="number" id="recipient-id" placeholder="Recipient ID" required />
+        <input type="number" id="amount" placeholder="Amount" required />
+        <input type="text" id="message" placeholder="Message (optional)" />
+        <button type="submit">Send Kudos</button>
+      </form>
+      <pre id="recognition-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Endorsement</h2>
+      <form id="endorsement-form">
+        <input type="number" id="recognition-id" placeholder="Recognition ID" required />
+        <input type="number" id="endorser-id" placeholder="Endorser ID" required />
+        <button type="submit">Endorse</button>
+      </form>
+      <pre id="endorsement-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Redemption</h2>
+      <form id="redemption-form">
+        <input type="number" id="redeem-student-id" placeholder="Student ID" required />
+        <input type="number" id="redeem-amount" placeholder="Amount" required />
+        <button type="submit">Redeem</button>
+      </form>
+      <pre id="redemption-result" class="result"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Leaderboard</h2>
+      <form id="leaderboard-form">
+        <input type="number" id="leaderboard-limit" placeholder="Limit (default 10)" />
+        <button type="submit">Load Leaderboard</button>
+      </form>
+      <pre id="leaderboard-result" class="result"></pre>
+    </section>
+  </div>
+</body>
+</html>
+
