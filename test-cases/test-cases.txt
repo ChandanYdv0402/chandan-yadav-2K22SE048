@@ -59,4 +59,3 @@ Prereqs
   - Correct ranking, with totals reflecting lifetime credits received (not reduced by redemption).
 
 Optional: Use the UI at `/` to perform each action with forms.
-
