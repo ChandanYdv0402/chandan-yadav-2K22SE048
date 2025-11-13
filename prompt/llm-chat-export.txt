@@ -370,7 +370,7 @@ AI:
 Run: pip install -r src/requirements.txt; python src/app.py; then open http://127.0.0.1:5000/. Use the forms or curl from the README.
 
 You:
-health returns ok. demo works. appreciate it
+demo works. appreciate it
 
 AI:
 Happy shipping! Ping me if you want a quick seed script or a Postgres migration outline.
