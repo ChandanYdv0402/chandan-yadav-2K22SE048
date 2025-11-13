@@ -1,5 +1,5 @@
 You:
-hey, wanna build a tiny kudos app for students. credits, send, endorse, redeem. keep it simple plz
+hey, I want to build a tiny kudos app for students. credits, send, endorse, redeem. keep it simple plz
 
 AI:
 Nice. Let's do a minimal Flask + SQLite app with SQLAlchemy. Endpoints for students, recognitions, endorsements, redemptions, leaderboard. Sound good?
