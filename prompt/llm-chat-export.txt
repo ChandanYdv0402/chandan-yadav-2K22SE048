@@ -1,6 +1,548 @@
-Replace this content with your complete LLM/AI assistant conversation export for this assignment.
+Conversation: Docs Q&A App Build (User  AI)
+Date: 2025-11-13
 
-Tips:
-- If you used this CLI or a web UI, export or copy the full transcript.
-- Paste it here so reviewers can see how you collaborated with AI.
+You:
+Im building a small Docs Q&A web app where users upload PDFs/links, and an AI answers questions using those docs. I want it to be practical, not over-engineered. Can you propose a minimal plan first, then well iterate? I might ask dumb questions and Ill probably change my mind a couple times.
 
+AI:
+Great! Quick plan:
+1) Choose stack (web framework + LLM + vector store).
+2) Implement ingestion (PDF/web crawl  chunk  embed  store).
+3) Build Q&A endpoint (retrieve  rank  synthesize  stream answer).
+4) Add simple UI (upload, chat, sources).
+5) Add auth + roles if needed.
+6) Add tests (unit + e2e) and observability.
+7) Optimize cost, rate limits, and error handling.
+Sound good? Any tech preferences?
+
+You:
+Lets do TypeScript. Leaning Next.js 14 (App Router). For vector store, not Pinecone; Id prefer an open-source option like Qdrant or pgvector. For LLM, probably OpenAI for now, but keep it pluggable. And lets stream answers.
+
+AI:
+Solid. Suggestion:
+- Framework: Next.js 14 (App Router) + server actions.
+- LLM: OpenAI initially; keep a provider layer so we can swap to Anthropic or a local model later.
+- Vector: Qdrant (dockerized) or Postgres + pgvector. Qdrant is easy for RAG experiments.
+- Embeddings: text-embedding-3-large (adjust if needed).
+- Chunking: Markdown-aware chunker + overlap (e.g., 15002000 tokens with 1015% overlap).
+- Retrieval: top-k 58, then rerank (optional).
+- UI: React chat + file uploads, stream via ReadableStream.
+- Auth: TBD.
+- Tests: Vitest + Playwright; a few golden tests for RAG answers.
+
+You:
+Cool. Quick Q: should I pick Qdrant or pgvector? Which plays nicer with LLMs?
+
+AI:
+Both are good. Tradeoffs:
+- Qdrant: purpose-built vector DB; strong filtering; fast; simple to run with Docker; good SDKs. Great when you want vector-first.
+- pgvector: single database for relational + vector; simplifies ops; good enough performance for many apps; easy joins/metadata; scales with Postgres tooling.
+If you want just works for RAG, Qdrant is a nice default. If you want fewer moving pieces, pgvector is simpler operationally.
+
+You:
+Well do Qdrant. Ill Docker it. Alsoshould we add authentication now?
+
+AI:
+A few questions:
+- Do you have public users or just internal teammates?
+- Do you need roles (Admin/User)?
+- Is SSO (Google, Microsoft) important?
+- Any PII/data sensitivity requiring stricter controls?
+
+You:
+Internal app first. Roles: Admin (manage corp sources), User (ask Qs, upload within quota). SSO via Google is nice. No hard PII, but better safe than sorry.
+
+AI:
+Then:
+- Auth: Auth.js (NextAuth) with Google provider; session via secure, httpOnly cookies.
+- Roles: store in DB; add a simple middleware check on admin routes.
+- CSRF: cookies are protected by sameSite + CSRF for mutating routes.
+- Rate limiting per user to avoid bill spikes.
+
+You:
+Please dont suggest storing JWTs in localStorage. I want httpOnly cookies.
+
+AI:
+Agreed. Use httpOnly, secure cookies; no tokens in localStorage. Middleware will read cookies server-side and attach user to the request. Note: Next.js middleware cannot access browser localStorage anyway (I incorrectly implied that in a previous projectmy bad). Server-only.
+
+You:
+Ok. Can you sketch the high-level architecture and RAG flow?
+
+AI:
+- Ingestion:
+  - Upload PDF or URL  parse to text  normalize/clean  split into chunks (token-based splitter with slight overlap).
+  - For each chunk: generate embeddings  upsert to Qdrant with metadata (doc_id, source_url, title, page).
+- Query:
+  - User question  generate query embedding  vector search (top-k) with metadata filters (namespace/user).
+  - Optional: rerank with a cross-encoder.
+  - Compose prompt: system instructions + selected chunks + user question.
+  - Stream completion to client; include citations (doc title/page/link).
+- Storage:
+  - Qdrant for vectors + metadata.
+  - A relational DB (sqlite/postgres) for users, docs, permissions, chat history (optional).
+- Observability:
+  - Capture prompts, latency, token usage, and retrieval quality metrics (e.g., Langfuse or simple logs).
+- Security:
+  - Namespace by user/org; dont leak docs across users.
+  - Rate limit; redact secrets; prompt-injection mitigation heuristics.
+
+You:
+Lets do a tiny code snippet for streaming in a Next.js route handler. Keep it very simple.
+
+AI:
+Heres a minimal skeleton (pseudo-ish):
+
+```ts
+// app/api/ask/route.ts
+import { NextRequest } from 'next/server';
+import { OpenAI } from 'openai'; // or your client wrapper
+
+export async function POST(req: NextRequest) {
+  const { question, userId } = await req.json();
+
+  // TODO: auth check, rate limit
+
+  // TODO: retrieve top-k from Qdrant with user namespace
+  const context = "retrieved chunks";
+
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+  const completion = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: 'You are a helpful assistant. Cite sources when possible.' },
+      { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
+    ],
+    stream: true,
+  });
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const chunk of completion) {
+        const content = chunk.choices?.[0]?.delta?.content ?? '';
+        if (content) controller.enqueue(encoder.encode(content));
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  });
+}
+```
+
+You:
+This compiles but sometimes I get a stuck stream on rapid requests. I think we need abort handling. Also, the completion iteration API looks off for the current SDK. Can we fix it?
+
+AI:
+Good catch. Add AbortController and use the SDKs Stream helper. Heres an updated version with proper cancellation and backpressure:
+
+```ts
+// app/api/ask/route.ts
+import { NextRequest } from 'next/server';
+import OpenAI from 'openai';
+
+export async function POST(req: NextRequest) {
+  const abort = new AbortController();
+  const { question, userId } = await req.json();
+
+  // TODO: auth, rate limit, Qdrant lookup
+  const context = '...';
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+
+  const stream = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: 'Answer using the provided context. Cite sources.' },
+      { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },
+    ],
+    stream: true,
+    // @ts-ignore the SDK will accept an AbortSignal via fetch options in env
+  }, { signal: abort.signal });
+
+  const encoder = new TextEncoder();
+
+  const readable = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const part of stream) {
+          const delta = part.choices?.[0]?.delta?.content ?? '';
+          if (delta) controller.enqueue(encoder.encode(delta));
+        }
+      } catch (err) {
+        // swallow AbortError
+      } finally {
+        controller.close();
+      }
+    },
+    cancel() {
+      abort.abort();
+    },
+  });
+
+  return new Response(readable, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+}
+```
+
+You:
+Thanks. Ill wire that up. For Qdrant, whats the npm package? Is it qdrant-client?
+
+AI:
+Yes, qdrant-client should workinstall via npm i qdrant-client.
+
+You:
+I think thats for Python. For Node, its qdrant-js (or @qdrant/js-client-rest). Lets correct that.
+
+AI:
+Youre rightthanks for catching it. Use:
+- npm i @qdrant/js-client-rest (REST) or
+- npm i @qdrant/js-client-grpc (gRPC)
+For simplicity, use the REST client during dev.
+
+You:
+Now, about chunking. You suggested 15002000 tokens with 1015% overlap. Isnt that too large for typical RAG? I thought 300800 tokens is more common.
+
+AI:
+Youre right to question that. Best chunk size depends on content structure and model context limits:
+- 300800 tokens is often a sweet spot for general docs.
+- Use larger chunks for code or tightly-coupled text, but it can hurt recall.
+Lets start with ~500 tokens, 50100 token overlap, and adjust after measuring retrieval accuracy.
+
+You:
+Cool. Lets talk authentication again. Well do Auth.js (NextAuth) with Google OAuth and httpOnly cookies. Roles in DB. Any pitfalls?
+
+AI:
+- Callback URL correctness across dev/prod.
+- Ensure cookie secure: true in prod, sameSite: 'lax'.
+- Avoid reading session client-side for access control; enforce server-side.
+- Add incremental authorization checks (route handlers + server actions).
+- For admin UI, guard server-rendered pages, not just client routes.
+
+You:
+Testing: should I go automatic or manual? I want a realistic mix.
+
+AI:
+Blend both:
+- Automated:
+  - Unit: chunker, embedder adapter, Qdrant client wrapper, prompt builder.
+  - Integration: ingest  retrieve  prompt; mock LLM to stabilize tests.
+  - E2E (Playwright): upload PDF, ask question, see streamed answer + citations.
+- Manual:
+  - UX smoke tests on staging (upload large files, slow network).
+  - Adversarial prompts (prompt injection, long questions).
+  - Notebook checks for retrieval quality (hit rate, MRR).
+Automate on PR; do a short manual checklist before releases.
+
+You:
+Give me a concrete test layout for a Next.js + Vitest + Playwright setup.
+
+AI:
+- src/lib/ (pure logic)
+  - chunker.test.ts: token count, overlap correctness, edge cases (empty, huge).
+  - embedder.test.ts: calls adapter, retries/backoff on 429 (mock).
+  - promptBuilder.test.ts: injects N chunks, caps on token budget, appends citations.
+- src/server/
+  - qdrantClient.test.ts: upsert/query with a test collection (spin up ephemeral Qdrant in CI).
+  - askRoute.test.ts: validates 400/401, rate limit, happy path (mock OpenAI stream).
+- e2e/
+  - upload-and-ask.spec.ts: upload doc  ask  see streamed answer, citations clickable.
+  - permissions.spec.ts: user vs admin rights, private doc isolation.
+  - rate-limits.spec.ts: rapid requests  check 429 and backoff UI hint.
+- Fixtures:
+  - tests/fixtures/sample.pdf, tests/fixtures/webpage.html
+- CI:
+  - Docker service for Qdrant
+  - PLAYWRIGHT_BROWSERS_PATH=0 to auto-install in CI
+  - OPENAI_API_KEY replaced by mock in CI
+
+You:
+Which LLM framework is best with this? LangChain, LlamaIndex, Vercel AI SDK, something else?
+
+AI:
+Depends on your needs:
+- Vercel AI SDK: great DX for streaming in Next.js; not a full RAG framework, but pairs nicely with LangChain/LlamaIndex.
+- LangChain (TS): lots of RAG building blocks (splitters, retrievers, routers); community momentum.
+- LlamaIndex (TS): strong high-level abstractions for indexes/routers; good for quick RAG protos.
+- No framework: roll your own for maximal control and minimal dependency weight.
+For your app: Next.js + Vercel AI SDK for UI streaming plus either LangChain or your own thin retrieval layer. If you want less magic, Id implement a small bespoke retriever with Qdrant and keep it simple.
+
+You:
+Ok, random operational questions:
+- How do I handle rate limits gracefully?
+- How do I keep cost predictable?
+- What about prompt injection?
+
+AI:
+- Rate limits:
+  - Backoff with jitter on 429; queue/stagger concurrent requests per user.
+  - Circuit-breaker if downstream errors spike.
+  - Cache recent retrievals for repeated queries.
+- Cost:
+  - Cap max context chunks and token budgets.
+  - Log tokens per request; daily cost dashboards.
+  - Prefer embeddings refresh windows, not on every ingest change.
+- Prompt injection:
+  - System prompt that the model must not follow untrusted instructions from retrieved text.
+  - Document provenance and strong citations; use retrieval as context, not instructions.
+  - Optionally classify inputs for jailbreak attempts; strip ignore previous instructions patterns.
+  - Consider content filters for uploads.
+
+You:
+Ive got a tiny bug. My client uses a debounced fetch for the ask route, but the wrong question is being sent sometimes (stale closure). Code:
+
+```ts
+const [q, setQ] = useState('');
+const ask = useCallback(debounce(() => {
+  fetch('/api/ask', { method: 'POST', body: JSON.stringify({ question: q }) });
+}, 300), []);
+```
+
+I see wrong values being sent if I type quickly.
+
+AI:
+Thats a classic stale capture. The ask callback closes over the initial q. Fix by:
+- Passing the current value explicitly into the debounced function.
+- Or use a ref that updates on every render.
+
+Example:
+
+```ts
+const ask = useMemo(() => debounce((question: string) => {
+  return fetch('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
+}, 300), []);
+
+useEffect(() => {
+  return () => ask.cancel();
+}, [ask]);
+
+// usage
+<input value={q} onChange={e => setQ(e.target.value)} />
+<button onClick={() => ask(q)}>Ask</button>
+```
+
+You:
+That works. Also, Im seeing an occasional Failed to fetch when I slam the Ask button. Should I add an AbortController client-side?
+
+AI:
+Yes. Keep one controller per in-flight request. Abort the previous when a new one starts:
+
+```ts
+const controllerRef = useRef<AbortController | null>(null);
+
+const ask = useMemo(() => debounce(async (question: string) => {
+  controllerRef.current?.abort();
+  controllerRef.current = new AbortController();
+  const res = await fetch('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+    signal: controllerRef.current.signal,
+  });
+  // handle stream
+}, 300), []);
+
+useEffect(() => () => {
+  ask.cancel();
+  controllerRef.current?.abort();
+}, [ask]);
+```
+
+You:
+What about CI and environment variables? I keep messing those up.
+
+AI:
+- .env:
+  - .env.local for dev, not committed.
+  - .env.test for CI with mocked keys.
+  - Ensure NEXT_PUBLIC_ prefix only for safe, public vars.
+- Secrets:
+  - Store OPENAI_API_KEY, QDRANT_URL, QDRANT_API_KEY, NEXTAUTH_SECRET, GOOGLE_CLIENT_ID/SECRET in CI secret manager.
+- CI steps:
+  - Lint  Typecheck  Unit tests  Spin up Qdrant (docker)  Integration tests  Playwright E2E (headless).
+  - Artifact: HTML test reports, coverage summary.
+- Migrations:
+  - If you use a relational DB, run migrations in CI (skip if ephemeral).
+
+You:
+Anything about logging/metrics?
+
+AI:
+- Request logs: method, route, userId, latency, status, tokens.
+- Retrieval logs: doc ids, scores, time; redact content at scale.
+- Error logs with request correlation IDs.
+- Metrics: p50/p95 latency, 429 rate, error rate, average tokens per request, QPS.
+- Optionally: Langfuse for prompt versions, evaluations, traces.
+
+You:
+I think Im ready for a README. Can you write it based on our convo? Include features, stack, setup, env vars, run, test, deploy, troubleshooting. Add a tiny architecture diagram. Assume Qdrant + OpenAI + Next.js 14 + Auth.js (Google). Keep it practical.
+
+AI:
+Heres a draft README.md:
+
+```md
+# Docs Q&A (RAG)  Next.js + Qdrant
+
+A lightweight docs Q&A app. Upload PDFs or URLs, ask questions, get cited answers powered by retrievalaugmented generation (RAG). Built with Next.js 14, Qdrant, and OpenAI.
+
+## Features
+- Upload PDFs or crawl URLs; automatic chunking + embeddings
+- Vector search via Qdrant with per-user namespaces
+- Streaming chat answers with citations
+- Google SSO via Auth.js; Admin/User roles
+- Rate limiting and basic observability
+- Tests: unit, integration, and Playwright e2e
+
+## Stack
+- Web: Next.js 14 (App Router, server actions)
+- Auth: Auth.js (NextAuth) + Google provider
+- Vector DB: Qdrant (Docker)
+- LLM: OpenAI (pluggable provider layer)
+- Tests: Vitest, Playwright
+- Language: TypeScript
+
+## Architecture
+
+```
++--------------+        +--------------+      +------------------+
+|    Client    | <----> | Next.js API  | ---> |  OpenAI (LLM)    |
+|  (Chat + UI) |        | (ask/upload) |      |  (streaming)     |
++--------------+        +--------------+      +------------------+
+         |                          |
+         v                          v
+   Upload PDFs/URLs           Qdrant (Vectors)
+   Chunk + Embed              (namespaced; metadata)
+```
+
+## Prerequisites
+- Node 18+
+- Docker (for Qdrant)
+- OpenAI API key
+- Google OAuth credentials
+- NextAuth secret
+
+## Setup
+
+1) Install:
+```
+npm i
+```
+
+2) Start Qdrant:
+```
+docker run -p 6333:6333 -p 6334:6334 -v qdrant_data:/qdrant/storage qdrant/qdrant
+```
+
+3) Create `.env.local`:
+```
+OPENAI_API_KEY=sk-...
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY= # optional if disabled
+NEXTAUTH_SECRET=replace_me
+NEXTAUTH_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+4) Initialize Auth.js, configure Google provider and callbacks.
+
+5) Run dev:
+```
+npm run dev
+```
+Open http://localhost:3000
+
+## Testing
+
+- Unit/integration:
+```
+npm run test
+```
+
+- E2E (headless):
+```
+npm run test:e2e
+```
+
+- Suggested layout:
+  - `src/lib/*`  chunker, embedder, prompt builder (unit)
+  - `src/server/*`  Qdrant client, ask route (integration)
+  - `e2e/*`  upload-and-ask, permissions, rate-limits
+
+## Deployment
+- Provide Qdrant endpoint (managed or self-hosted).
+- Set secrets in the platform (OpenAI, NextAuth, Google).
+- Enable HTTP/2 for streaming where supported.
+- Scale with per-route concurrency limits and caching.
+
+## Troubleshooting
+- `429 Too Many Requests`:
+  - Add backoff with jitter; reduce concurrency; check rate limit quotas.
+- Stuck streams:
+  - Ensure AbortController on both client and server; check platform streaming support.
+- Empty answers:
+  - Verify chunk sizes (start ~500 tokens); check retrieval filters.
+- Leaks across users:
+  - Verify namespace/user filters on Qdrant queries.
+- Cost spikes:
+  - Cap context size; log token usage; cache frequent queries.
+```
+
+You:
+Looks good. Two tweaks: mention @qdrant/js-client-rest in the README and explicitly say we use httpOnly cookies for sessions. Can you add a short note on prompt injection mitigation?
+
+AI:
+Updated snippets for the README sections:
+
+- Stack/Setup additions:
+  - Add dependency: npm i @qdrant/js-client-rest
+  - Auth: sessions via secure, httpOnly cookies (no tokens in localStorage).
+
+- Security note:
+  - Prompt injection: Model is instructed to treat retrieved content as untrusted context, not instructions. Inputs are heuristically scanned for jailbreak patterns. Citations and provenance are surfaced to help users validate outputs.
+
+You:
+Finally, can you outline key test cases we should absolutely have?
+
+AI:
+- Upload:
+  - Accept PDF; reject > allowed size; handle corrupt PDFs.
+  - URL crawl respects robots.txt (if enabled) and depth limits.
+- Chunking:
+  - Bound chunk size; verify overlap; strip boilerplate.
+- Embeddings:
+  - Retries with exponential backoff on 429; proper timeouts.
+- Permissions:
+  - User cant see other users docs; admin can manage corp sources.
+- Ask route:
+  - 401 without session; 429 under load; happy path returns streamed content and citations.
+- E2E:
+  - Upload doc  ask question  see relevant answer + citation links.
+  - Fast repeated asks  last request wins (previous aborted).
+  - Mobile viewport renders chat and upload flow correctly.
+
+You:
+One last thing: if the model context window overflows, what should we do?
+
+AI:
+- Token budgeting:
+  - Precompute token usage for system prompt + question.
+  - Iteratively add top-ranked chunks until hitting cap; truncate gracefully.
+  - Summarize or compress overflow candidates (optional).
+- Fallback:
+  - If still too big, route to a larger-context model (configurable).
+  - Log overflow events to tune chunking and retrieval.
+
+You:
+Ok, thats all. This is very helpful. Ill integrate and tweak the README.
+
+AI:
+Awesomeping me if errors crop up (especially around streaming and auth callbacks). Good luck!
+
+End of conversation.
