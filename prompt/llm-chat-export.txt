@@ -356,7 +356,7 @@ AI:
 DB-level UniqueConstraint on (recognition_id, endorser_id) ensures the one-endorsement rule even under concurrent requests, beyond app-layer checks.
 
 You:
-ok i think im ready. any last gotchas
+ok i think im ready anything I can do more?
 
 AI:
 - Race conditions around balance updates could be addressed with transactions if traffic increases.
@@ -364,7 +364,7 @@ AI:
 - Validation could be stricter (e.g., message length caps, positive integers only).
 
 You:
-thanks. gonna run once more
+thanks. will run once more
 
 AI:
 Run: pip install -r src/requirements.txt; python src/app.py; then open http://127.0.0.1:5000/. Use the forms or curl from the README.
